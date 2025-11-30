@@ -283,14 +283,17 @@ int main(void) {
         return 1;
     }
 
-    //loop principal: só desenha
-    for (int t = 0; t < 300; t++) {
+    //loop principal, só desenha enquanto o jogo ainda é executado
+    while (game_running) {
         draw_all();
         Sleep(100); //taxa de atualização da tela
     }
 
-    //sinaliza que o jogo terminou
-    game_running = 0;
+    //acabou o jogo: limpa tela e mostra mensagem
+    system("cls");
+    printf("=== JOGO ENCERRADO ===\n");
+    printf("Obrigado por jogar o cruzamento :)\n");
+    printf("Pressione ENTER para sair...\n");
 
     //espera a thread de carros terminar
     WaitForSingleObject(hCarsThread, INFINITE);
