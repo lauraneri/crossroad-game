@@ -1,4 +1,3 @@
-// main.c
 #include <stdio.h>
 #include <windows.h>
 #include "map.h"
@@ -63,7 +62,6 @@ int main(void) {
     map_init();
 
     //inicializa carro global
-    Car car;
     car_init(&car);
 
     //inicializa a seçao critica
@@ -85,10 +83,10 @@ int main(void) {
         return 1;
     }
 
-    // loop principal: só desenha
+    //loop principal: só desenha
     for (int t = 0; t < 100; t++) {
-        draw_all();// usa o carro protegido pela critical section
-        Sleep(100);// taxa de atualização da tela
+        draw_all(); //usa o carro protegido pela critical section
+        Sleep(100); //taxa de atualização da tela
 
         //se o carro já não estiver ativo, podemos parar mais cedo
         EnterCriticalSection(&csCar);

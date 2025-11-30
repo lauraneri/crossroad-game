@@ -14,7 +14,7 @@ typedef struct {
     int row;
     int col;
     Direction dir;
-    int active;   //1 = andando, 0 = ja saiu da tela
+    int active; //1 = andando, 0 = ja saiu da tela
 } Car;
 
 //inicializa um carro vindo da esquerda pra direita (por enquanto)
