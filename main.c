@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <windows.h>
+#include <conio.h>
 #include "map.h"
 #include "car.h"
 
@@ -11,14 +12,22 @@ int car_count = 0;
 CRITICAL_SECTION csCars; //protege o vetor cars[]
 int game_running = 1;
 
-HANDLE cruzamento_sem;   //semáforo para a área crítica do centro
+//estado lógico dos semáforos de trânsito
+typedef enum { LIGHT_RED, LIGHT_GREEN } LightState;
+
+LightState light_ns; //semáforo para carros N/S
+LightState light_ew; //semáforo para carros L/O
+
+CRITICAL_SECTION csLights; //protege acesso aos semáforos
+
+HANDLE cruzamento_sem; //semáforo para a área crítica do centro
 
 //thread que atualiza o movimento dos carros
 DWORD WINAPI cars_thread(LPVOID arg) {
     (void)arg;
 
-    int mid_row = MAP_ROWS / 2;
-    int mid_col = MAP_COLS / 2;
+    int mid_row = MAP_ROWS/2;
+    int mid_col = MAP_COLS/2;
 
     while (game_running) {
         for (int i = 0; i < car_count; i++) {
@@ -34,6 +43,16 @@ DWORD WINAPI cars_thread(LPVOID arg) {
 
             int approaching_center = 0;
             int in_center = 0;
+            int can_go = 0;  //se o semáforo da direção está verde
+
+            //verifica em qual semáforo esse carro depende
+            EnterCriticalSection(&csLights);
+            if (c.dir == DIR_NORTH || c.dir == DIR_SOUTH) {
+                can_go = (light_ns == LIGHT_GREEN);
+            } else {
+                can_go = (light_ew == LIGHT_GREEN);
+            }
+            LeaveCriticalSection(&csLights);
 
             //detectar se está perto do centro/no centro
             switch (c.dir) {
@@ -70,35 +89,71 @@ DWORD WINAPI cars_thread(LPVOID arg) {
                     break;
             }
 
+            //regra de movimento:
             //se está prestes a entrar no centro:
             if (approaching_center) {
-                //espera semáforo do cruzamento (região crítica)
-                WaitForSingleObject(cruzamento_sem, INFINITE);
+                if (can_go) {
+                    //semáforo da direção está verde -> tenta entrar na região crítica
+                    WaitForSingleObject(cruzamento_sem, INFINITE);
 
-                //agora pode fazer o passo (vai entrar no centro)
-                EnterCriticalSection(&csCars);
-                car_update(&cars[i]);
-                LeaveCriticalSection(&csCars);
+                    EnterCriticalSection(&csCars);
+                    car_update(&cars[i]); //entra no centro
+                    LeaveCriticalSection(&csCars);
+                } else {
+                    //semáforo vermelho -> NÃO anda (fica parado)
+                    //(aqui da pra contar tempo de espera, etc.)
+                }
             }
-            //se está no centro, o próximo passo é sair:
             else if (in_center) {
-                //faz o passo (sair do centro)
+                //já está no centro, o próximo passo é sair
                 EnterCriticalSection(&csCars);
-                car_update(&cars[i]);
+                car_update(&cars[i]); // sai do centro
                 LeaveCriticalSection(&csCars);
 
-                //libera o semáforo para outro carro poder entrar
+                //libera a região crítica
                 ReleaseSemaphore(cruzamento_sem, 1, NULL);
             }
-            //caso normal (longe do centro):
             else {
+                //longe do centro -> movimento normal
                 EnterCriticalSection(&csCars);
                 car_update(&cars[i]);
                 LeaveCriticalSection(&csCars);
             }
         }
 
-        Sleep(200); //controla a velocidade dos carros
+        Sleep(200); //velocidade geral dos carros
+    }
+
+    return 0;
+}
+
+//thread que lê entrada do usuário para controlar os semáforos
+DWORD WINAPI input_thread(LPVOID arg) {
+    (void)arg;
+
+    while (game_running) {
+        if (_kbhit()) {          //tem tecla pressionada?
+            int ch = _getch();   //lê uma tecla (sem eco)
+
+            if (ch == 'q' || ch == 'Q') {
+                game_running = 0; //sinaliza pra todo mundo encerrar
+                break;
+            } else if (ch == '1') {
+                //NS verde, LO vermelho
+                EnterCriticalSection(&csLights);
+                light_ns = LIGHT_GREEN;
+                light_ew = LIGHT_RED;
+                LeaveCriticalSection(&csLights);
+            } else if (ch == '2') {
+                //LO verde, NS vermelho
+                EnterCriticalSection(&csLights);
+                light_ns = LIGHT_RED;
+                light_ew = LIGHT_GREEN;
+                LeaveCriticalSection(&csLights);
+            }
+        }
+
+        Sleep(50);  //evita usar 100% de CPU
     }
 
     return 0;
@@ -125,7 +180,16 @@ void draw_all(void) {
     //limpa tela
     system("cls");
 
-    //imprime o tmp
+    //imprime informações de status (semáforos)
+    EnterCriticalSection(&csLights);
+    printf("N-S: %s | L-O: %s\n",
+           light_ns == LIGHT_GREEN ? "VERDE" : "VERMELHO",
+           light_ew == LIGHT_GREEN ? "VERDE" : "VERMELHO");
+    LeaveCriticalSection(&csLights);
+
+    printf("Controles: [1] N-S verde  [2] L-O verde  [q] sair\n\n");
+
+    //imprime o mapa
     for (int i = 0; i < MAP_ROWS; i++) {
         for (int j = 0; j < MAP_COLS; j++) {
             putchar(tmp[i][j]);
@@ -159,6 +223,13 @@ int main(void) {
 
     //inicializa a critical section
     InitializeCriticalSection(&csCars);
+    InitializeCriticalSection(&csLights);
+
+    //estado inicial dos semáforos: N-S verde, L-O vermelho
+    EnterCriticalSection(&csLights);
+    light_ns = LIGHT_GREEN;
+    light_ew = LIGHT_RED;
+    LeaveCriticalSection(&csLights);
 
     //inicializa o semáforo do cruzamento:
     cruzamento_sem = CreateSemaphore(
@@ -171,6 +242,7 @@ int main(void) {
     if (cruzamento_sem == NULL) {
         printf("Erro ao criar semáforo do cruzamento.\n");
         DeleteCriticalSection(&csCars);
+        DeleteCriticalSection(&csLights);
         return 1;
     }
 
@@ -196,6 +268,21 @@ int main(void) {
         return 1;
     }
 
+    //thread de input (controle dos semáforos e sair)
+    HANDLE hInputThread = CreateThread(
+        NULL, 0, input_thread, NULL, 0, NULL
+    );
+    if (hInputThread == NULL) {
+        printf("Erro ao criar thread de input.\n");
+        game_running = 0;
+        WaitForSingleObject(hCarsThread, INFINITE);
+        CloseHandle(hCarsThread);
+        CloseHandle(cruzamento_sem);
+        DeleteCriticalSection(&csCars);
+        DeleteCriticalSection(&csLights);
+        return 1;
+    }
+
     //loop principal: só desenha
     for (int t = 0; t < 300; t++) {
         draw_all();
@@ -207,11 +294,14 @@ int main(void) {
 
     //espera a thread de carros terminar
     WaitForSingleObject(hCarsThread, INFINITE);
+    WaitForSingleObject(hInputThread, INFINITE);
     CloseHandle(hCarsThread);
-    CloseHandle(cruzamento_sem);  //fecha o handle do semáforo
+    CloseHandle(hInputThread);
+    CloseHandle(cruzamento_sem); //fecha o handle do semáforo
 
     //libera a critical section
     DeleteCriticalSection(&csCars);
+    DeleteCriticalSection(&csLights);
 
     printf("\nFim. Pressione ENTER para sair...\n");
     getchar();
