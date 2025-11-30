@@ -17,10 +17,10 @@ typedef struct {
     int active; //1 = andando, 0 = ja saiu da tela
 } Car;
 
-//inicializa um carro vindo da esquerda pra direita (por enquanto)
-void car_init(Car *c);
+//inicializa um carro vindo de uma direção específica
+void car_init(Car *c, Direction dir);
 
-//atualiza a posicao do carro (sem thread, só movimento)
+//atualiza a posicao de um carro
 void car_update(Car *c);
 
 //desenha o carro em cima de um buffer (tmp) passado

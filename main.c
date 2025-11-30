@@ -3,27 +3,26 @@
 #include "map.h"
 #include "car.h"
 
-Car car;
-CRITICAL_SECTION csCar;
+#define MAX_CARS 100
+
+Car cars[MAX_CARS];
+int car_count = 0;
+
+CRITICAL_SECTION csCars; //protege o vetor cars[]
 int game_running = 1;
 
-//criaçao da thread do carro
-DWORD WINAPI car_thread(LPVOID arg) {
-    (void)arg;  //só pra evitar warning de parametro não usado
+//thread que atualiza o movimento dos carros
+DWORD WINAPI cars_thread(LPVOID arg) {
+    (void)arg;
 
     while (game_running) {
-        EnterCriticalSection(&csCar);
-        //atualiza o carro
-        car_update(&car);
-        int ativo = car.active;
-        LeaveCriticalSection(&csCar);
-
-        if (!ativo) {
-            //se o carro saiu da tela, podemos encerrar a thread
-            break;
+        EnterCriticalSection(&csCars);
+        for (int i = 0; i < car_count; i++) {
+            car_update(&cars[i]);
         }
+        LeaveCriticalSection(&csCars);
 
-        Sleep(200); //controla a velocidade do carro
+        Sleep(200); //velocidade dos carros
     }
 
     return 0;
@@ -40,15 +39,17 @@ void draw_all(void) {
         }
     }
 
-    //desenha o carro em cima do tmp
-    EnterCriticalSection(&csCar);
-    car_draw(&car, tmp);
-    LeaveCriticalSection(&csCar);
+    //desenha todos os carros em cima do tmp
+    EnterCriticalSection(&csCars);
+    for (int i = 0; i < car_count; i++) {
+        car_draw(&cars[i], tmp);
+    }
+    LeaveCriticalSection(&csCars);
 
     //limpa tela
     system("cls");
 
-    //imprime
+    //imprime o tmp
     for (int i = 0; i < MAP_ROWS; i++) {
         for (int j = 0; j < MAP_COLS; j++) {
             putchar(tmp[i][j]);
@@ -57,55 +58,69 @@ void draw_all(void) {
     }
 }
 
+//adiciona um novo carro ao vetor, entrando na seção crítica e verificando limites
+int spawn_car(Direction dir) {
+    EnterCriticalSection(&csCars);
+
+    if (car_count >= MAX_CARS) {
+        LeaveCriticalSection(&csCars);
+        return -1;
+    }
+
+    int id = car_count;
+    car_init(&cars[car_count], dir);
+    car_count++;
+
+    LeaveCriticalSection(&csCars);
+    return id;
+}
+
 int main(void) {
-    //inicializa mapa
     map_init();
 
-    //inicializa carro global
-    car_init(&car);
+    //inicializa o vetor de carros
+    car_count = 0;
 
-    //inicializa a seçao critica
-    InitializeCriticalSection(&csCar);
+    //inicializa a critical section
+    InitializeCriticalSection(&csCars);
 
-    //thread que vai atualizar o carro
-    HANDLE hCarThread = CreateThread(
-        NULL,              //segurança padrão
-        0,                 //stack default
-        car_thread,        //função da thread
-        NULL,              //argumento para a thread
-        0,                 //flags
-        NULL               //ID da thread (não precisamos)
+    //cria alguns carros de teste
+    spawn_car(DIR_WEST);  //da esquerda para a direita
+    spawn_car(DIR_EAST);  //da direita para a esquerda
+    spawn_car(DIR_NORTH); //de cima para baixo
+    spawn_car(DIR_SOUTH); //de baixo para cima
+
+    //cria a thread que vai atualizar TODOS os carros
+    HANDLE hCarsThread = CreateThread(
+        NULL,
+        0,
+        cars_thread,
+        NULL,
+        0,
+        NULL
     );
 
-    if (hCarThread == NULL) {
-        printf("Erro ao criar thread do carro.\n");
-        DeleteCriticalSection(&csCar);
+    if (hCarsThread == NULL) {
+        printf("Erro ao criar thread de carros.\n");
+        DeleteCriticalSection(&csCars);
         return 1;
     }
 
     //loop principal: só desenha
-    for (int t = 0; t < 100; t++) {
-        draw_all(); //usa o carro protegido pela critical section
+    for (int t = 0; t < 300; t++) {
+        draw_all();
         Sleep(100); //taxa de atualização da tela
-
-        //se o carro já não estiver ativo, podemos parar mais cedo
-        EnterCriticalSection(&csCar);
-        int ativo = car.active;
-        LeaveCriticalSection(&csCar);
-        if (!ativo) {
-            break;
-        }
     }
 
-    //sinaliza que o jogo terminou (caso a thread ainda esteja rodando)
+    //sinaliza que o jogo terminou
     game_running = 0;
 
-    //espera a thread terminar
-    WaitForSingleObject(hCarThread, INFINITE);
-    CloseHandle(hCarThread);
+    //espera a thread de carros terminar
+    WaitForSingleObject(hCarsThread, INFINITE);
+    CloseHandle(hCarsThread);
 
-    //limpa recursos
-    DeleteCriticalSection(&csCar);
+    //libera a critical section
+    DeleteCriticalSection(&csCars);
 
     printf("\nFim. Pressione ENTER para sair...\n");
     getchar();
