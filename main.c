@@ -11,18 +11,94 @@ int car_count = 0;
 CRITICAL_SECTION csCars; //protege o vetor cars[]
 int game_running = 1;
 
+HANDLE cruzamento_sem;   //semáforo para a área crítica do centro
+
 //thread que atualiza o movimento dos carros
 DWORD WINAPI cars_thread(LPVOID arg) {
     (void)arg;
 
-    while (game_running) {
-        EnterCriticalSection(&csCars);
-        for (int i = 0; i < car_count; i++) {
-            car_update(&cars[i]);
-        }
-        LeaveCriticalSection(&csCars);
+    int mid_row = MAP_ROWS / 2;
+    int mid_col = MAP_COLS / 2;
 
-        Sleep(200); //velocidade dos carros
+    while (game_running) {
+        for (int i = 0; i < car_count; i++) {
+
+            //copia estado atual do carro para variáveis locais
+            EnterCriticalSection(&csCars);
+            Car c = cars[i];   //cópia
+            LeaveCriticalSection(&csCars);
+
+            if (!c.active) {
+                continue;
+            }
+
+            int approaching_center = 0;
+            int in_center = 0;
+
+            //detectar se está perto do centro/no centro
+            switch (c.dir) {
+                case DIR_WEST:  //andando esquerda pra direita
+                    if (c.row == mid_row && c.col == mid_col - 1) {
+                        approaching_center = 1;   //está logo antes do centro
+                    } else if (c.row == mid_row && c.col == mid_col) {
+                        in_center = 1;
+                    }
+                    break;
+
+                case DIR_EAST:  //direita pra esquerda
+                    if (c.row == mid_row && c.col == mid_col + 1) {
+                        approaching_center = 1;
+                    } else if (c.row == mid_row && c.col == mid_col) {
+                        in_center = 1;
+                    }
+                    break;
+
+                case DIR_NORTH: //cima pra baixo
+                    if (c.col == mid_col && c.row == mid_row - 1) {
+                        approaching_center = 1;
+                    } else if (c.col == mid_col && c.row == mid_row) {
+                        in_center = 1;
+                    }
+                    break;
+
+                case DIR_SOUTH: //baixo pra cima
+                    if (c.col == mid_col && c.row == mid_row + 1) {
+                        approaching_center = 1;
+                    } else if (c.col == mid_col && c.row == mid_row) {
+                        in_center = 1;
+                    }
+                    break;
+            }
+
+            //se está prestes a entrar no centro:
+            if (approaching_center) {
+                //espera semáforo do cruzamento (região crítica)
+                WaitForSingleObject(cruzamento_sem, INFINITE);
+
+                //agora pode fazer o passo (vai entrar no centro)
+                EnterCriticalSection(&csCars);
+                car_update(&cars[i]);
+                LeaveCriticalSection(&csCars);
+            }
+            //se está no centro, o próximo passo é sair:
+            else if (in_center) {
+                //faz o passo (sair do centro)
+                EnterCriticalSection(&csCars);
+                car_update(&cars[i]);
+                LeaveCriticalSection(&csCars);
+
+                //libera o semáforo para outro carro poder entrar
+                ReleaseSemaphore(cruzamento_sem, 1, NULL);
+            }
+            //caso normal (longe do centro):
+            else {
+                EnterCriticalSection(&csCars);
+                car_update(&cars[i]);
+                LeaveCriticalSection(&csCars);
+            }
+        }
+
+        Sleep(200); //controla a velocidade dos carros
     }
 
     return 0;
@@ -84,13 +160,27 @@ int main(void) {
     //inicializa a critical section
     InitializeCriticalSection(&csCars);
 
+    //inicializa o semáforo do cruzamento:
+    cruzamento_sem = CreateSemaphore(
+        NULL,  //atributos de segurança padrão
+        1,     //valor inicial = 1 (semaforo binário)
+        1,     //valor máximo = 1
+        NULL   //sem nome
+    );
+
+    if (cruzamento_sem == NULL) {
+        printf("Erro ao criar semáforo do cruzamento.\n");
+        DeleteCriticalSection(&csCars);
+        return 1;
+    }
+
     //cria alguns carros de teste
     spawn_car(DIR_WEST);  //da esquerda para a direita
     spawn_car(DIR_EAST);  //da direita para a esquerda
     spawn_car(DIR_NORTH); //de cima para baixo
     spawn_car(DIR_SOUTH); //de baixo para cima
 
-    //cria a thread que vai atualizar TODOS os carros
+    //cria a thread que vai atualizar todos os carros
     HANDLE hCarsThread = CreateThread(
         NULL,
         0,
@@ -118,6 +208,7 @@ int main(void) {
     //espera a thread de carros terminar
     WaitForSingleObject(hCarsThread, INFINITE);
     CloseHandle(hCarsThread);
+    CloseHandle(cruzamento_sem);  //fecha o handle do semáforo
 
     //libera a critical section
     DeleteCriticalSection(&csCars);
