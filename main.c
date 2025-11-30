@@ -202,17 +202,60 @@ void draw_all(void) {
 int spawn_car(Direction dir) {
     EnterCriticalSection(&csCars);
 
-    if (car_count >= MAX_CARS) {
-        LeaveCriticalSection(&csCars);
-        return -1;
+    //tenta achar slot de carro inativo pra reutilizar
+    for (int i = 0; i < car_count; i++) {
+        if (!cars[i].active) {
+            car_init(&cars[i], dir);
+            LeaveCriticalSection(&csCars);
+            return i;
+        }
     }
 
-    int id = car_count;
-    car_init(&cars[car_count], dir);
-    car_count++;
+    //se não tiver nenhum inativo, tenta usar uma nova posição
+    if (car_count < MAX_CARS) {
+        int id = car_count;
+        car_init(&cars[car_count], dir);
+        car_count++;
+        LeaveCriticalSection(&csCars);
+        return id;
+    }
 
+    //sem espaço
     LeaveCriticalSection(&csCars);
-    return id;
+    return -1;
+}
+
+//thread que spawna carros N-S a cada 2 segundos
+DWORD WINAPI spawner_ns_thread(LPVOID arg) {
+    (void)arg;
+
+    while (game_running) {
+        //tbm da pra alternar entre criar no norte e no sul
+        spawn_car(DIR_NORTH);
+        Sleep(2000);//a cada 2 segundos
+
+        //se quisermos também do sul:
+        //spawn_car(DIR_SOUTH);
+        //Sleep(2000);
+    }
+
+    return 0;
+}
+
+//thread que spawna carros L-O a cada 2.5 segundos
+DWORD WINAPI spawner_ew_thread(LPVOID arg) {
+    (void)arg;
+
+    while (game_running) {
+        spawn_car(DIR_WEST);
+        Sleep(2500);// a cada 2.5 segundos
+
+        //direção contraria:
+        //spawn_car(DIR_EAST);
+        //Sleep(2500);
+    }
+
+    return 0;
 }
 
 int main(void) {
@@ -247,41 +290,31 @@ int main(void) {
     }
 
     //cria alguns carros de teste
-    spawn_car(DIR_WEST);  //da esquerda para a direita
-    spawn_car(DIR_EAST);  //da direita para a esquerda
-    spawn_car(DIR_NORTH); //de cima para baixo
-    spawn_car(DIR_SOUTH); //de baixo para cima
+    // spawn_car(DIR_WEST);  //da esquerda para a direita
+    // spawn_car(DIR_EAST);  //da direita para a esquerda
+    // spawn_car(DIR_NORTH); //de cima para baixo
+    // spawn_car(DIR_SOUTH); //de baixo para cima
 
     //cria a thread que vai atualizar todos os carros
-    HANDLE hCarsThread = CreateThread(
-        NULL,
-        0,
-        cars_thread,
-        NULL,
-        0,
-        NULL
-    );
-
-    if (hCarsThread == NULL) {
-        printf("Erro ao criar thread de carros.\n");
-        DeleteCriticalSection(&csCars);
-        return 1;
-    }
-
+    HANDLE hCarsThread = CreateThread(NULL, 0, cars_thread, NULL, 0, NULL);
     //thread de input (controle dos semáforos e sair)
-    HANDLE hInputThread = CreateThread(
-        NULL, 0, input_thread, NULL, 0, NULL
-    );
-    if (hInputThread == NULL) {
-        printf("Erro ao criar thread de input.\n");
+    HANDLE hInputThread = CreateThread(NULL, 0, input_thread, NULL, 0, NULL);
+
+    HANDLE hSpawnNS = CreateThread(NULL, 0, spawner_ns_thread, NULL, 0, NULL);
+    HANDLE hSpawnEW = CreateThread(NULL, 0, spawner_ew_thread, NULL, 0, NULL);
+    if (hCarsThread == NULL || hInputThread == NULL || hSpawnNS == NULL || hSpawnEW == NULL) {
+        printf("Erro ao criar alguma thread.\n");
         game_running = 0;
+        //VERIFICAR DAQUI PRA BAIXO wait for single object e close handle
         WaitForSingleObject(hCarsThread, INFINITE);
+        WaitForSingleObject(hInputThread, INFINITE);
         CloseHandle(hCarsThread);
+        CloseHandle(hInputThread);
         CloseHandle(cruzamento_sem);
         DeleteCriticalSection(&csCars);
         DeleteCriticalSection(&csLights);
         return 1;
-    }
+}
 
     //loop principal, só desenha enquanto o jogo ainda é executado
     while (game_running) {
@@ -295,18 +328,22 @@ int main(void) {
     printf("Obrigado por jogar o cruzamento :)\n");
     printf("Pressione ENTER para sair...\n");
 
-    //espera a thread de carros terminar
+    //garante que as threads vao sair
     WaitForSingleObject(hCarsThread, INFINITE);
     WaitForSingleObject(hInputThread, INFINITE);
+    WaitForSingleObject(hSpawnNS, INFINITE);
+    WaitForSingleObject(hSpawnEW, INFINITE);
+
     CloseHandle(hCarsThread);
     CloseHandle(hInputThread);
+    CloseHandle(hSpawnNS);
+    CloseHandle(hSpawnEW);
     CloseHandle(cruzamento_sem); //fecha o handle do semáforo
 
     //libera a critical section
     DeleteCriticalSection(&csCars);
     DeleteCriticalSection(&csLights);
 
-    printf("\nFim. Pressione ENTER para sair...\n");
     getchar();
     return 0;
 }
