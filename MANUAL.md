@@ -17,7 +17,7 @@ O jogo foi desenvolvido e testado em Windows 11. Mas além disso, você precisa 
 - Um **compilador C** que suporte `windows.h`, como o **MinGW-w64 (gcc)**. Ao instalar, certifique-se de que o diretório `bin` do MinGW (`.../mingw64/bin`) esteja no `PATH`.
 - Um terminal, como **PowerShell**, **Git Bash**, ou **CMD**.
 
-### 2.3. Arquivos do projeto
+### 2.2. Arquivos do projeto
 
 Na pasta do projeto devem existir, no mínimo:
 
@@ -109,6 +109,8 @@ O jogador deve alternar os semáforos com 1 e 2 para:
 - manter o fluxo de trânsito;
 
 - evitar que muitos carros fiquem acumulados em uma só direção.
+
+Se, em qualquer uma das quatro direções (cima, baixo, esquerda ou direita), a **fila de carros ocupar todos os espaços entre o cruzamento e a borda da tela**, o sistema considera que houve um congestionamento extremo e o jogo termina com **GAME OVER**.
 
 ## 6. Threads utilizadas e por que foram usadas
 
@@ -287,3 +289,5 @@ Mesmo assim, o jogo demonstra:
 - como um `semáforo binário` pode representar um recurso compartilhado (o centro do cruzamento);
 
 - como a lógica de semáforos de trânsito é análoga a políticas de escalonamento e controle de acesso a recursos em Sistemas Operacionais.
+
+Além disso, foi definido um critério de **game over** baseado em congestionamento: se uma das filas de carros chegar completamente da região do cruzamento até a borda da tela, considera-se que o sistema entrou em estado de saturação e o jogo termina. Isso reforça a ideia de que o jogador está, na prática, gerenciando um recurso limitado (a capacidade das vias) e tentando evitar um “colapso” do sistema, de forma análoga ao que acontece em Sistemas Operacionais com falta de recursos.
