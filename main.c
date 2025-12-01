@@ -20,7 +20,8 @@ int car_at[MAP_ROWS][MAP_COLS];
 CRITICAL_SECTION csCars; //protege o vetor cars[]
 CRITICAL_SECTION csLights; //protege acesso aos semáforos
 
-int game_running = 1;
+int game_running = 1; //indica se o jogo está rodando
+int game_over_congestion = 0; //indica se terminou por congestionamento
 
 //estado lógico dos semáforos de trânsito
 typedef enum { LIGHT_RED, LIGHT_GREEN } LightState;
@@ -33,6 +34,70 @@ HANDLE hConsole;
 
 void set_color(WORD color) {
     SetConsoleTextAttribute(hConsole, color);
+}
+
+//verifica se há congestionamento (todas as celulas da borda ate o cruzamento estão ocupadas)
+int check_congestion(void) {
+    int mid_row = MAP_ROWS / 2;
+    int mid_col = MAP_COLS / 2;
+    int full;
+    
+    EnterCriticalSection(&csCars);
+
+    //CIMA
+    full = 1;
+    for (int r = 0; r < mid_row; r++) {
+        if (car_at[r][mid_col] == -1) {
+            full = 0;
+            break;
+        }
+    }
+    if (full) {
+        LeaveCriticalSection(&csCars);
+        return 1;
+    }
+
+    //BAIXO
+    full = 1;
+    for (int r = MAP_ROWS - 1; r > mid_row; r--) {
+        if (car_at[r][mid_col] == -1) {
+            full = 0;
+            break;
+        }
+    }
+    if (full) {
+        LeaveCriticalSection(&csCars);
+        return 1;
+    }
+
+    //ESQUERDA
+    full = 1;
+    for (int c = 0; c < mid_col; c++) {
+        if (car_at[mid_row][c] == -1) {
+            full = 0;
+            break;
+        }
+    }
+    if (full) {
+        LeaveCriticalSection(&csCars);
+        return 1;
+    }
+
+    //DIREITA
+    full = 1;
+    for (int c = MAP_COLS - 1; c > mid_col; c--) {
+        if (car_at[mid_row][c] == -1) {
+            full = 0;
+            break;
+        }
+    }
+    if (full) {
+        LeaveCriticalSection(&csCars);
+        return 1;
+    }
+
+    LeaveCriticalSection(&csCars);
+    return 0;   // não está congestionado ainda
 }
 
 //thread que atualiza o movimento dos carros
@@ -372,26 +437,26 @@ int spawn_car(Direction dir) {
     return -1; //sem espaço
 }
 
-//thread que spawna carros N-S a cada 2 segundos
+//thread que spawna carros N-S a cada um segundo e meio
 DWORD WINAPI spawner_ns_thread(LPVOID arg) {
     (void)arg;
 
     while (game_running) {
         //tbm da pra alternar entre criar no norte e no sul
         spawn_car(DIR_NORTH);
-        Sleep(2000);//a cada 2 segundos
+        Sleep(1500);//a cada um segundo e meio
     }
 
     return 0;
 }
 
-//thread que spawna carros L-O a cada 2.5 segundos
+//thread que spawna carros L-O a cada 1 segundo
 DWORD WINAPI spawner_ew_thread(LPVOID arg) {
     (void)arg;
 
     while (game_running) {
         spawn_car(DIR_WEST);
-        Sleep(2500);// a cada 2.5 segundos
+        Sleep(1000);// a cada segundo
     }
 
     return 0;
@@ -480,14 +545,30 @@ int main(void) {
     //loop principal, só desenha enquanto o jogo ainda é executado
     while (game_running) {
         draw_all();
+
+        //verifica congestionamento depois de desenhar
+        if (check_congestion()) {
+            game_over_congestion = 1;
+            game_running = 0;
+            break;
+        }
+
         Sleep(200); //taxa de atualização da tela
     }
 
     //acabou o jogo, limpa tela e mostra mensagem
     system("cls");
-    printf("=== JOGO ENCERRADO ===\n");
-    printf("Obrigado por jogar o cruzamento :)\n");
-    printf("Pressione ENTER para sair...\n");
+
+    if (game_over_congestion) {
+        printf("=== GAME OVER ===\n\n");
+        printf("Voce causou um congestionamento!!!\n");
+        printf("Tente controlar melhor os semaforos da proxima vez!\n\n");
+        printf("=================\n");
+    } else {
+        printf("=== JOGO ENCERRADO ===\n\n");
+        printf("Voce saiu do jogo!\n\n");
+        printf("=================\n");
+    }
 
     //garante que as threads vao sair
     WaitForSingleObject(hCarsThread, INFINITE);
