@@ -31,50 +31,6 @@ void car_init(Car *c, Direction dir) {
     }
 }
 
-// void car_update(Car *c) {
-//     if (!c->active) return;
-
-//     switch (c->dir) {
-//         case DIR_WEST: //esquerda pra direita
-//             c->col++;
-//             if (c->col >= MAP_COLS) {
-//                 c->active = 0;
-//             }
-//             break;
-
-//         case DIR_EAST: //direita pra esquerda
-//             c->col--;
-//             if (c->col < 0) {
-//                 c->active = 0;
-//             }
-//             break;
-
-//         case DIR_NORTH: //cima pra baixo
-//             c->row++;
-//             if (c->row >= MAP_ROWS) {
-//                 c->active = 0;
-//             }
-//             break;
-
-//         case DIR_SOUTH: // baixo pra cima
-//             c->row--;
-//             if (c->row < 0) {
-//                 c->active = 0;
-//             }
-//             break;
-//     }
-// }
-
-// void car_draw(const Car *c, char buffer[MAP_ROWS][MAP_COLS]) {
-//     if (!c->active) return;
-
-//     //verifica se ta dentro do mapa antes de desenhar
-//     if (c->row >= 0 && c->row < MAP_ROWS &&
-//         c->col >= 0 && c->col < MAP_COLS) {
-//         buffer[c->row][c->col] = 'c';  //icone do carro colocado na posicao
-//     }
-// }
-
 void car_next_position(const Car *c, int *next_row, int *next_col) {
     *next_row = c->row;
     *next_col = c->col;
