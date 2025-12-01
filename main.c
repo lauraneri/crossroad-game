@@ -9,7 +9,12 @@
 Car cars[MAX_CARS];
 int car_count = 0;
 
+//car_at[row][col] = id do carro naquela célula, ou -1 se vazia
+int car_at[MAP_ROWS][MAP_COLS];
+
 CRITICAL_SECTION csCars; //protege o vetor cars[]
+CRITICAL_SECTION csLights; //protege acesso aos semáforos
+
 int game_running = 1;
 
 //estado lógico dos semáforos de trânsito
@@ -18,34 +23,27 @@ typedef enum { LIGHT_RED, LIGHT_GREEN } LightState;
 LightState light_ns; //semáforo para carros N/S
 LightState light_ew; //semáforo para carros L/O
 
-CRITICAL_SECTION csLights; //protege acesso aos semáforos
-
 HANDLE cruzamento_sem; //semáforo para a área crítica do centro
 
 //thread que atualiza o movimento dos carros
 DWORD WINAPI cars_thread(LPVOID arg) {
     (void)arg;
 
-    int mid_row = MAP_ROWS/2;
-    int mid_col = MAP_COLS/2;
+    int mid_row = MAP_ROWS / 2;
+    int mid_col = MAP_COLS / 2;
 
     while (game_running) {
         for (int i = 0; i < car_count; i++) {
 
-            //copia estado atual do carro para variáveis locais
+            // copia estado do carro
             EnterCriticalSection(&csCars);
-            Car c = cars[i];   //cópia
+            Car c = cars[i];
             LeaveCriticalSection(&csCars);
 
-            if (!c.active) {
-                continue;
-            }
+            if (!c.active) continue;
 
-            int approaching_center = 0;
-            int in_center = 0;
-            int can_go = 0;  //se o semáforo da direção está verde
-
-            //verifica em qual semáforo esse carro depende
+            // decide semáforo lógico
+            int can_go = 0;
             EnterCriticalSection(&csLights);
             if (c.dir == DIR_NORTH || c.dir == DIR_SOUTH) {
                 can_go = (light_ns == LIGHT_GREEN);
@@ -54,74 +52,155 @@ DWORD WINAPI cars_thread(LPVOID arg) {
             }
             LeaveCriticalSection(&csLights);
 
-            //detectar se está perto do centro/no centro
-            switch (c.dir) {
-                case DIR_WEST:  //andando esquerda pra direita
-                    if (c.row == mid_row && c.col == mid_col - 1) {
-                        approaching_center = 1;   //está logo antes do centro
-                    } else if (c.row == mid_row && c.col == mid_col) {
-                        in_center = 1;
-                    }
-                    break;
+            int next_row, next_col;
+            car_next_position(&c, &next_row, &next_col);
 
-                case DIR_EAST:  //direita pra esquerda
-                    if (c.row == mid_row && c.col == mid_col + 1) {
-                        approaching_center = 1;
-                    } else if (c.row == mid_row && c.col == mid_col) {
-                        in_center = 1;
-                    }
-                    break;
+            int at_center = (c.row == mid_row && c.col == mid_col);
+            int next_is_center = (next_row == mid_row && next_col == mid_col);
 
-                case DIR_NORTH: //cima pra baixo
-                    if (c.col == mid_col && c.row == mid_row - 1) {
-                        approaching_center = 1;
-                    } else if (c.col == mid_col && c.row == mid_row) {
-                        in_center = 1;
-                    }
-                    break;
-
-                case DIR_SOUTH: //baixo pra cima
-                    if (c.col == mid_col && c.row == mid_row + 1) {
-                        approaching_center = 1;
-                    } else if (c.col == mid_col && c.row == mid_row) {
-                        in_center = 1;
-                    }
-                    break;
-            }
-
-            //regra de movimento:
-            //se está prestes a entrar no centro:
-            if (approaching_center) {
-                if (can_go) {
-                    //semáforo da direção está verde -> tenta entrar na região crítica
-                    WaitForSingleObject(cruzamento_sem, INFINITE);
-
-                    EnterCriticalSection(&csCars);
-                    car_update(&cars[i]); //entra no centro
-                    LeaveCriticalSection(&csCars);
-                } else {
-                    //semáforo vermelho -> NÃO anda (fica parado)
-                    //(aqui da pra contar tempo de espera, etc.)
+            // função helper inline: move se célula alvo livre
+            // (não declaramos fora pra simplificar a explicação)
+            if (!at_center && next_is_center) {
+                // ---- Tentando ENTRAR no centro ----
+                if (!can_go) {
+                    // sinal vermelho -> não anda
+                    continue;
                 }
-            }
-            else if (in_center) {
-                //já está no centro, o próximo passo é sair
+
+                // pega região crítica (semáforo SO)
+                WaitForSingleObject(cruzamento_sem, INFINITE);
+
                 EnterCriticalSection(&csCars);
-                car_update(&cars[i]); // sai do centro
+
+                // re-obtem estado real do carro (pode ter mudado)
+                if (!cars[i].active) {
+                    LeaveCriticalSection(&csCars);
+                    ReleaseSemaphore(cruzamento_sem, 1, NULL);
+                    continue;
+                }
+
+                int r = cars[i].row;
+                int ccol = cars[i].col;
+                car_next_position(&cars[i], &next_row, &next_col);
+
+                // verifica se ainda está indo pro centro
+                if (!(next_row == mid_row && next_col == mid_col)) {
+                    // algo mudou, não entra no centro
+                    LeaveCriticalSection(&csCars);
+                    ReleaseSemaphore(cruzamento_sem, 1, NULL);
+                    continue;
+                }
+
+                // checa se a célula do centro está livre (em tese sempre)
+                if (car_at[next_row][next_col] == -1) {
+                    // desocupa posição antiga
+                    if (r >= 0 && r < MAP_ROWS && ccol >= 0 && ccol < MAP_COLS) {
+                        if (car_at[r][ccol] == i) car_at[r][ccol] = -1;
+                    }
+
+                    // move para o centro
+                    cars[i].row = next_row;
+                    cars[i].col = next_col;
+                    cars[i].holding_sem = 1;
+                    car_at[next_row][next_col] = i;
+                } else {
+                    // centro ocupado (deveria não acontecer, mas por segurança)
+                    cars[i].holding_sem = 0;
+                    ReleaseSemaphore(cruzamento_sem, 1, NULL);
+                }
+
+                LeaveCriticalSection(&csCars);
+            }
+            else if (at_center) {
+                // ---- Regras pra quem JÁ ESTÁ no centro ----
+                int soltou = 0;
+
+                EnterCriticalSection(&csCars);
+
+                if (!cars[i].active) {
+                    LeaveCriticalSection(&csCars);
+                    continue;
+                }
+
+                int r = cars[i].row;
+                int ccol = cars[i].col;
+
+                // calcula próxima posição com base na direção
+                car_next_position(&cars[i], &next_row, &next_col);
+
+                // desocupa SEMPRE o centro (posição atual)
+                if (r >= 0 && r < MAP_ROWS && ccol >= 0 && ccol < MAP_COLS) {
+                    if (car_at[r][ccol] == i) {
+                        car_at[r][ccol] = -1;
+                    }
+                }
+
+                // se saiu da tela, marca carro como inativo
+                if (next_row < 0 || next_row >= MAP_ROWS ||
+                    next_col < 0 || next_col >= MAP_COLS) {
+
+                    cars[i].active = 0;
+                } else {
+                    // 🔴 AQUI VEM O PULO DO GATO:
+                    // ignoramos se a célula de saída está ocupada ou não.
+                    // Simplesmente colocamos o carro lá.
+
+                    int other = car_at[next_row][next_col];
+                    if (other != -1 && other != i) {
+                        // se quiser, pode "matar" o carro que estava ali
+                        cars[other].active = 0;
+                    }
+
+                    cars[i].row = next_row;
+                    cars[i].col = next_col;
+                    car_at[next_row][next_col] = i;
+                }
+
+                soltou = cars[i].holding_sem;
+                cars[i].holding_sem = 0;
+
                 LeaveCriticalSection(&csCars);
 
-                //libera a região crítica
-                ReleaseSemaphore(cruzamento_sem, 1, NULL);
+                if (soltou) {
+                    ReleaseSemaphore(cruzamento_sem, 1, NULL);
+                }
             }
             else {
-                //longe do centro -> movimento normal
+                // ---- Movimento NORMAL (longe do centro) ----
                 EnterCriticalSection(&csCars);
-                car_update(&cars[i]);
+
+                if (!cars[i].active) {
+                    LeaveCriticalSection(&csCars);
+                    continue;
+                }
+
+                int r = cars[i].row;
+                int ccol = cars[i].col;
+                car_next_position(&cars[i], &next_row, &next_col);
+
+                // saiu da tela?
+                if (next_row < 0 || next_row >= MAP_ROWS ||
+                    next_col < 0 || next_col >= MAP_COLS) {
+
+                    if (car_at[r][ccol] == i) car_at[r][ccol] = -1;
+                    cars[i].active = 0;
+
+                } else if (car_at[next_row][next_col] == -1 &&
+                           !(next_row == mid_row && next_col == mid_col)) {
+                    // célula livre e NÃO é o centro (o centro é tratado nos casos acima)
+                    if (car_at[r][ccol] == i) car_at[r][ccol] = -1;
+                    cars[i].row = next_row;
+                    cars[i].col = next_col;
+                    car_at[next_row][next_col] = i;
+                } else {
+                    // célula ocupada -> não anda (fila física)
+                }
+
                 LeaveCriticalSection(&csCars);
             }
         }
 
-        Sleep(200); //velocidade geral dos carros
+        Sleep(200);
     }
 
     return 0;
@@ -173,7 +252,12 @@ void draw_all(void) {
     //desenha todos os carros em cima do tmp
     EnterCriticalSection(&csCars);
     for (int i = 0; i < car_count; i++) {
-        car_draw(&cars[i], tmp);
+        if (!cars[i].active) continue;
+        int r = cars[i].row;
+        int c = cars[i].col;
+        if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS) {
+            tmp[r][c] = 'c';
+        }
     }
     LeaveCriticalSection(&csCars);
 
@@ -202,27 +286,45 @@ void draw_all(void) {
 int spawn_car(Direction dir) {
     EnterCriticalSection(&csCars);
 
-    //tenta achar slot de carro inativo pra reutilizar
+    //tenta reutilizar slot inativo
     for (int i = 0; i < car_count; i++) {
         if (!cars[i].active) {
             car_init(&cars[i], dir);
+            int r = cars[i].row;
+            int c = cars[i].col;
+            if (car_at[r][c] == -1) {
+                car_at[r][c] = i;
+            } else {
+                //posição inicial ocupada -> não usa esse carro
+                cars[i].active = 0;
+                LeaveCriticalSection(&csCars);
+                return -1;
+            }
             LeaveCriticalSection(&csCars);
             return i;
         }
     }
 
-    //se não tiver nenhum inativo, tenta usar uma nova posição
+    //se não há inativos, tenta criar novo
     if (car_count < MAX_CARS) {
         int id = car_count;
-        car_init(&cars[car_count], dir);
-        car_count++;
-        LeaveCriticalSection(&csCars);
-        return id;
+        car_init(&cars[id], dir);
+        int r = cars[id].row;
+        int c = cars[id].col;
+        if (car_at[r][c] == -1) {
+            car_at[r][c] = id;
+            car_count++;
+            LeaveCriticalSection(&csCars);
+            return id;
+        } else {
+            cars[id].active = 0;
+            LeaveCriticalSection(&csCars);
+            return -1;
+        }
     }
 
-    //sem espaço
     LeaveCriticalSection(&csCars);
-    return -1;
+    return -1; //sem espaço
 }
 
 //thread que spawna carros N-S a cada 2 segundos
@@ -261,6 +363,13 @@ DWORD WINAPI spawner_ew_thread(LPVOID arg) {
 int main(void) {
     map_init();
 
+    //inicializa mapa de ocupação
+    for (int i = 0; i < MAP_ROWS; i++) {
+        for (int j = 0; j < MAP_COLS; j++) {
+            car_at[i][j] = -1;
+        }
+    }
+
     //inicializa o vetor de carros
     car_count = 0;
 
@@ -289,32 +398,49 @@ int main(void) {
         return 1;
     }
 
-    //cria alguns carros de teste
-    // spawn_car(DIR_WEST);  //da esquerda para a direita
-    // spawn_car(DIR_EAST);  //da direita para a esquerda
-    // spawn_car(DIR_NORTH); //de cima para baixo
-    // spawn_car(DIR_SOUTH); //de baixo para cima
-
     //cria a thread que vai atualizar todos os carros
     HANDLE hCarsThread = CreateThread(NULL, 0, cars_thread, NULL, 0, NULL);
     //thread de input (controle dos semáforos e sair)
     HANDLE hInputThread = CreateThread(NULL, 0, input_thread, NULL, 0, NULL);
-
+    //spawners
     HANDLE hSpawnNS = CreateThread(NULL, 0, spawner_ns_thread, NULL, 0, NULL);
     HANDLE hSpawnEW = CreateThread(NULL, 0, spawner_ew_thread, NULL, 0, NULL);
+
     if (hCarsThread == NULL || hInputThread == NULL || hSpawnNS == NULL || hSpawnEW == NULL) {
         printf("Erro ao criar alguma thread.\n");
+
+        //avisa as threads (que existem) para pararem
         game_running = 0;
-        //VERIFICAR DAQUI PRA BAIXO wait for single object e close handle
-        WaitForSingleObject(hCarsThread, INFINITE);
-        WaitForSingleObject(hInputThread, INFINITE);
-        CloseHandle(hCarsThread);
-        CloseHandle(hInputThread);
-        CloseHandle(cruzamento_sem);
+
+        //espera e fecha somente as threads que foram criadas com sucesso
+        if (hCarsThread != NULL) {
+            WaitForSingleObject(hCarsThread, INFINITE);
+            CloseHandle(hCarsThread);
+        }
+        if (hInputThread != NULL) {
+            WaitForSingleObject(hInputThread, INFINITE);
+            CloseHandle(hInputThread);
+        }
+        if (hSpawnNS != NULL) {
+            WaitForSingleObject(hSpawnNS, INFINITE);
+            CloseHandle(hSpawnNS);
+        }
+        if (hSpawnEW != NULL) {
+            WaitForSingleObject(hSpawnEW, INFINITE);
+            CloseHandle(hSpawnEW);
+        }
+
+        //fecha o semáforo do cruzamento (se foi criado antes)
+        if (cruzamento_sem != NULL) {
+            CloseHandle(cruzamento_sem);
+        }
+
+        //destroi as critical sections
         DeleteCriticalSection(&csCars);
         DeleteCriticalSection(&csLights);
+
         return 1;
-}
+    }
 
     //loop principal, só desenha enquanto o jogo ainda é executado
     while (game_running) {
@@ -334,11 +460,12 @@ int main(void) {
     WaitForSingleObject(hSpawnNS, INFINITE);
     WaitForSingleObject(hSpawnEW, INFINITE);
 
+    //fecha os handles das threads
     CloseHandle(hCarsThread);
     CloseHandle(hInputThread);
     CloseHandle(hSpawnNS);
     CloseHandle(hSpawnEW);
-    CloseHandle(cruzamento_sem); //fecha o handle do semáforo
+    CloseHandle(cruzamento_sem);
 
     //libera a critical section
     DeleteCriticalSection(&csCars);
