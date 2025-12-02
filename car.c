@@ -1,8 +1,8 @@
 #include "car.h"
 
 void car_init(Car *c, Direction dir) {
-    int mid_row = MAP_ROWS / 2;
-    int mid_col = MAP_COLS / 2;
+    int mid_row = MAP_ROWS/2;
+    int mid_col = MAP_COLS/2;
 
     c->dir = dir;
     c->active = 1;

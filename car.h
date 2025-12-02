@@ -21,9 +21,6 @@ typedef struct {
 //inicializa um carro vindo de uma direção específica
 void car_init(Car *c, Direction dir);
 
-//atualiza a posicao de um carro
-//void car_update(Car *c);
-
 //desenha o carro em cima de um buffer (tmp) passado
 void car_draw(const Car *c, char buffer[MAP_ROWS][MAP_COLS]);
 

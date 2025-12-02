@@ -4,17 +4,17 @@
 #include "map.h"
 #include "car.h"
 
-#define COLOR_DEFAULT 7   //cinza
-#define COLOR_RED     12  //vermelho claro
-#define COLOR_GREEN   10  //verde claro
-#define COLOR_YELLOW  14  //amarelo
+#define COLOR_DEFAULT 7 //cinza
+#define COLOR_RED 12 //vermelho claro
+#define COLOR_GREEN 10 //verde claro
+#define COLOR_YELLOW 14 //amarelo
 
 #define MAX_CARS 100
 
 Car cars[MAX_CARS];
 int car_count = 0;
 
-//car_at[row][col] = id do carro naquela célula, ou -1 se vazia
+//car_at[row][col] = id do carro naquela celula, ou -1 se vazia
 int car_at[MAP_ROWS][MAP_COLS];
 
 CRITICAL_SECTION csCars; //protege o vetor cars[]
@@ -38,8 +38,8 @@ void set_color(WORD color) {
 
 //verifica se há congestionamento (todas as celulas da borda ate o cruzamento estão ocupadas)
 int check_congestion(void) {
-    int mid_row = MAP_ROWS / 2;
-    int mid_col = MAP_COLS / 2;
+    int mid_row = MAP_ROWS/2;
+    int mid_col = MAP_COLS/2;
     int full;
     
     EnterCriticalSection(&csCars);
