@@ -104,8 +104,8 @@ int check_congestion(void) {
 DWORD WINAPI cars_thread(LPVOID arg) {
     (void)arg;
 
-    int mid_row = MAP_ROWS / 2;
-    int mid_col = MAP_COLS / 2;
+    int mid_row = MAP_ROWS/2;
+    int mid_col = MAP_COLS/2;
 
     while (game_running) {
         for (int i = 0; i < car_count; i++) {
@@ -133,8 +133,8 @@ DWORD WINAPI cars_thread(LPVOID arg) {
             int at_center = (c.row == mid_row && c.col == mid_col);
             int next_is_center = (next_row == mid_row && next_col == mid_col);
 
-            //função helper inline: move se célula alvo livre
-            //(não declarada fora pra simplificar a explicação)
+            //move se a célula alvo estiver livre
+            //(não declarei fora pra simplificar a explicação)
             if (!at_center && next_is_center) {
                 //tentando ENTRAR no centro
                 if (!can_go) {
@@ -488,7 +488,7 @@ int main(void) {
     light_ew = LIGHT_RED;
     LeaveCriticalSection(&csLights);
 
-    //inicializa o semáforo do cruzamento:
+    //inicializa o semáforo do cruzamento
     cruzamento_sem = CreateSemaphore(NULL, 1, 1, NULL);
 
     if (cruzamento_sem == NULL) {
